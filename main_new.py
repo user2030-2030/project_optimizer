@@ -231,6 +231,36 @@ def load_cpi(start: datetime) -> pd.DataFrame:
     df = df[df["Date"] >= pd.Timestamp(start)]
     df = df.set_index("Date").resample("M").last()
     return df
+@st.cache_data(ttl=None, show_spinner=False)
+def load_tbill(start: datetime) -> pd.Series:
+    """
+    Load 3M T-Bill (TB3MS) from a local CSV in the repo.
+    Accepts FRED 'downloaddata' style (DATE,VALUE) or (DATE,TB3MS).
+    Returns a monthly Series of **annualized %** rates aligned to month-end.
+    """
+    from pathlib import Path
+    candidates = [
+        Path("TB3MS_FRED.csv"),
+        Path("data/TB3MS_FRED.csv"),
+        Path("assets/TB3MS_FRED.csv"),
+        Path(__file__).parent / "TB3MS_FRED.csv",
+    ]
+    csv_path = next((p for p in candidates if p.exists()), None)
+    if csv_path is None:
+        raise FileNotFoundError("TB3MS_FRED.csv not found in repo (root/data/assets).")
+
+    head = pd.read_csv(csv_path, nrows=5)
+    cols = [str(c).strip() for c in head.columns]
+    date_col  = next((c for c in cols if c.lower() in {"date","observation_date"}), cols[0])
+    value_col = next((c for c in cols if c.upper() in {"TB3MS","VALUE"}), cols[1] if len(cols)>1 else cols[0])
+
+    tb = (pd.read_csv(csv_path, usecols=[date_col, value_col], parse_dates=[date_col], comment="#")
+            .rename(columns={date_col:"Date", value_col:"TB3MS"}))
+    tb["TB3MS"] = pd.to_numeric(tb["TB3MS"], errors="coerce")  # annualized percent
+    tb = tb.dropna(subset=["TB3MS"]).sort_values("Date")
+    tb = tb[tb["Date"] >= pd.Timestamp(start)]
+    tb = tb.set_index("Date").resample("M").last()["TB3MS"].rename("TB3MS")  # monthly, % p.a.
+    return tb
 
 
 def align_and_trim(prices: pd.DataFrame, cpi: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -281,12 +311,36 @@ with st.sidebar:
 
     st.divider()
 
-    rf_ann = st.slider("Risk‑free annual rate (smooth comparator)", min_value=0.0, max_value=0.10, value=0.03, step=0.005)
-    plot_real = st.checkbox("Plot in **real** terms (CPI‑adjusted) — CPI becomes a flat floor", value=True)
+    rf_mode = st.selectbox(
+        "Risk-free comparator",
+        ["Fixed rate (slider)", "3-Month T-Bill from file (TB3MS_FRED.csv)"],
+        help="Use a smooth fixed rate, or read monthly TB3MS from the CSV in your repo."
+    )
+
+    rf_ann = st.slider(
+        "Fixed annual rate",
+        min_value=0.0, max_value=0.10, value=0.03, step=0.005,
+        help="Ignored when T-Bill mode is selected."
+    ) if rf_mode == "Fixed rate (slider)" else None
 
     st.divider()
 
-    method = st.selectbox("Optimize", options=["Sharpe", "Sortino", "Sterling", "Calmar", "CVaR (minimize)"])
+    opt_help = (
+        "• **Sharpe** — *William F. Sharpe*: annualized excess return / volatility. "
+        "Best when returns are roughly symmetric.\n"
+        "• **Sortino** — *Frank A. Sortino*: annualized excess return / **downside** volatility only.\n"
+        "• **Sterling** — (industry usage): annualized return / average of large drawdowns "
+        "(we use mean of 3 worst); emphasizes drawdown-aware reward.\n"
+        "• **Calmar** — (CALMAR Research): **CAGR / Max Drawdown**; rewards high growth with small peak-to-trough losses.\n"
+        "• **CVaR (minimize)** — *Rockafellar & Uryasev*: minimizes expected loss in worst α tail (here α=5%)."
+    )
+
+    method = st.selectbox(
+        "Optimize",
+        options=["Sharpe", "Sortino", "Sterling", "Calmar", "CVaR (minimize)"],
+        help=opt_help,   # ← shows the little ⓘ next to the label
+    )
+
 
     enforce_dd = st.checkbox("Enforce Max Drawdown constraint", value=False)
     dd_limit = st.slider("Max Drawdown limit", min_value=0.05, max_value=0.80, value=0.25, step=0.05)
@@ -330,7 +384,23 @@ if len(tickers) >= 2:
     wealth_port = cumulative_wealth(port).rename("Optimized Portfolio")
 
     # Comparator wealth
-    wealth_rf = riskfree_wealth(wealth_port.index, rf_ann)
+    # ---------- Comparator wealth (risk-free) ----------
+    if rf_mode == "3-Month T-Bill from file (TB3MS_FRED.csv)":
+        tb = load_tbill(start)                                  # % p.a.
+        tb = tb.reindex(wealth_port.index).ffill()              # align
+        rf_m_nom = (tb / 100.0) / 12.0                          # monthly nominal
+    else:
+        rf_m_nom = pd.Series((1.0 + rf_ann)**(1/12) - 1.0, index=wealth_port.index, name="rf_m")
+    
+    if plot_real:
+        # convert to **real** monthly: (1+rf)/(1+infl)-1
+        infl = cpi["CPI"].pct_change().reindex(wealth_port.index).fillna(0.0)
+        rf_m_eff = ((1.0 + rf_m_nom) / (1.0 + infl)) - 1.0
+    else:
+        rf_m_eff = rf_m_nom
+    
+    wealth_rf = (1.0 + rf_m_eff).cumprod().rename("Risk-Free")
+
 
     # ---------- Charts ----------
     tab1, tab2 = st.tabs(["Wealth Curves", "Weights & Metrics"])
@@ -423,10 +493,41 @@ if len(tickers) >= 2:
         "‘CPI floor’ means we plot in real terms so CPI is flat; if you switch off real terms, the CPI line becomes the normalized CPI level. "
         "Risk‑free is a smooth comparator at the chosen annual rate and is not included in the investable set."
     )
-
-else:
-    st.info("Pick at least two assets in the sidebar to begin.")
-# Safe wrapper: allows `python main.py` without double-starting Streamlit
+    viz = st.selectbox(
+        "Weights visualization",
+        ["Pie", "Donut", "Horizontal bar"],
+        index=0,
+        help="Pie is classic; Donut is cleaner; Horizontal bar is compact and precise."
+    )
+    
+    nonzero = w_df[w_df["Weight"] > 1e-6]
+    
+    if viz == "Pie":
+        fig2, ax2 = plt.subplots(figsize=(6, 6))
+        ax2.pie(nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90)
+        ax2.axis("equal"); st.pyplot(fig2)
+    
+    elif viz == "Donut":
+        fig2, ax2 = plt.subplots(figsize=(6, 6))
+        wedges, texts, autotexts = ax2.pie(
+            nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90,
+            wedgeprops=dict(width=0.40)  # hole
+        )
+        ax2.axis("equal"); st.pyplot(fig2)
+    
+    else:  # Horizontal bar
+        fig2, ax2 = plt.subplots(figsize=(6.5, 4.5))
+        plot_df = nonzero.sort_values("Weight")
+        ax2.barh(plot_df.index, (plot_df["Weight"]*100).round(2))
+        ax2.set_xlabel("Weight (%)"); ax2.set_ylabel("")
+        for i, (name, wv) in enumerate(zip(plot_df.index, (plot_df["Weight"]*100).values)):
+            ax2.text(wv + 0.2, i, f"{wv:.1f}%", va="center")
+        st.pyplot(fig2)
+    
+    
+    else:
+        st.info("Pick at least two assets in the sidebar to begin.")
+    # Safe wrapper: allows `python main.py` without double-starting Streamlit
 if __name__ == "__main__":
     import sys
     try:
