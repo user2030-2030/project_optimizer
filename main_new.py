@@ -171,23 +171,53 @@ def load_prices(tickers, start):
     return data
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
+import io, requests
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import streamlit as st
+
+@st.cache_data(ttl=86400, show_spinner=False)
 def load_cpi(start: datetime) -> pd.DataFrame:
     """
-    Fetch CPI (CPIAUCSL) monthly levels from FRED via CSV.
-    Works on Python 3.12/3.13+ without pandas_datareader.
+    Fetch CPI (CPIAUCSL) monthly levels from FRED with robust fallbacks.
+    Works on Python 3.12/3.13 and handles occasional non-CSV responses.
     """
-    url = (
-        "https://fred.stlouisfed.org/graph/fredgraph.csv"
-        f"?id=CPIAUCSL&observation_start={start:%Y-%m-%d}"
-    )
-    cpi = pd.read_csv(url, parse_dates=["DATE"])
-    cpi = cpi.rename(columns={"DATE": "Date", "CPIAUCSL": "CPI"})
-    cpi["CPI"] = pd.to_numeric(cpi["CPI"], errors="coerce")
-    cpi = cpi.dropna(subset=["CPI"]).set_index("Date").sort_index()
-    # ensure end-of-month sampling
-    cpi = cpi.resample("M").last()
-    return cpi
+    urls = [
+        # Static “downloaddata” CSV (no API key, full history)
+        "https://fred.stlouisfed.org/series/CPIAUCSL/downloaddata/CPIAUCSL.csv",
+        # Graph CSV with start filter (fallback)
+        f"https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL&observation_start={start:%Y-%m-%d}",
+    ]
+    headers = {"User-Agent": "Mozilla/5.0 (Streamlit app)"}
+
+    for url in urls:
+        try:
+            r = requests.get(url, headers=headers, timeout=15)
+            r.raise_for_status()
+            # Parse as CSV (skip comment lines if present)
+            df = pd.read_csv(io.StringIO(r.text), parse_dates=["DATE"], comment="#")
+            # Some endpoints provide VALUE instead of CPIAUCSL
+            value_col = "CPIAUCSL" if "CPIAUCSL" in df.columns else ("VALUE" if "VALUE" in df.columns else None)
+            if value_col is None:
+                continue  # not a valid CSV, try next URL
+
+            df = (df[["DATE", value_col]]
+                    .rename(columns={"DATE": "Date", value_col: "CPI"}))
+            df["CPI"] = pd.to_numeric(df["CPI"], errors="coerce")
+            df = df.dropna(subset=["CPI"]).sort_values("Date")
+            df = df[df["Date"] >= pd.Timestamp(start)]
+            df = df.set_index("Date").resample("M").last()
+            if not df.empty:
+                return df
+        except Exception as e:
+            st.warning(f"FRED fetch failed for {url}: {e}")
+
+    # Last-resort fallback so the app stays usable
+    st.warning("CPI unavailable; using a flat CPI baseline temporarily.")
+    idx = pd.date_range(start, pd.Timestamp.today(), freq="M")
+    return pd.DataFrame({"CPI": np.full(len(idx), 100.0)}, index=idx)
+
 
 
 def align_and_trim(prices: pd.DataFrame, cpi: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
