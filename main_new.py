@@ -1,10 +1,4 @@
-\documentclass[10pt]{article}
-\usepackage[usenames]{color} %used for font color
-\usepackage{amssymb} %maths
-\usepackage{amsmath} %maths
-\usepackage[utf8]{inputenc} %useful to type directly diacritic characters
-\begin{document}
-\begin{align*}# inflation_hedge_optimizer_app.py
+# inflation_hedge_optimizer_app.py
 # Streamlit app: Inflation "floor" (CPI), risk-free comparator, and portfolio optimizer with drawdown constraint
 # Date: 2025-10-28
 
@@ -388,5 +382,3 @@ if __name__ == "__main__":
             from streamlit import cli as stcli
         sys.argv = ["streamlit", "run", __file__]
         sys.exit(stcli.main())
-\end{align*}
-\end{document}
