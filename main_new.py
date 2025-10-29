@@ -485,6 +485,10 @@ if len(tickers) >= 2:
                 "CVaR 5% (monthly)"
             ])
             st.table(met)
+    plot_real = st.checkbox(
+        "Plot in **real** terms (CPI-adjusted) — CPI becomes a flat floor",
+        value=True
+    )
 
     st.divider()
     
