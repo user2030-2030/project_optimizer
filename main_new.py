@@ -487,12 +487,7 @@ if len(tickers) >= 2:
             st.table(met)
 
     st.divider()
-    st.caption(
-        "Notes: ‘Optimize’ sets the objective for the historical backtest and solves a long‑only weight vector (sum=1). "
-        "If **Max Drawdown** is ON, the optimizer enforces the specified drawdown limit over the full sample. "
-        "‘CPI floor’ means we plot in real terms so CPI is flat; if you switch off real terms, the CPI line becomes the normalized CPI level. "
-        "Risk‑free is a smooth comparator at the chosen annual rate and is not included in the investable set."
-    )
+    
     viz = st.selectbox(
         "Weights visualization",
         ["Pie", "Donut", "Horizontal bar"],
@@ -528,6 +523,14 @@ if len(tickers) >= 2:
     else:
         st.info("Pick at least two assets in the sidebar to begin.")
     # Safe wrapper: allows `python main.py` without double-starting Streamlit
+    st.divider()
+    st.caption(
+        "Notes: ‘Optimize’ sets the objective for the historical backtest and solves a long‑only weight vector (sum=1). "
+        "If **Max Drawdown** is ON, the optimizer enforces the specified drawdown limit over the full sample. "
+        "‘CPI floor’ means we plot in real terms so CPI is flat; if you switch off real terms, the CPI line becomes the normalized CPI level. "
+        "Risk‑free is a smooth comparator at the chosen annual rate and is not included in the investable set."
+    )
+    
 if __name__ == "__main__":
     import sys
     try:
