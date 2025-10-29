@@ -4,4 +4,6 @@ pandas
 numpy
 scipy
 matplotlib
+requests
+
 # plotly              # if you switch charts to Plotly
