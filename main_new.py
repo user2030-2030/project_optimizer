@@ -180,11 +180,15 @@ import streamlit as st
 @st.cache_data(ttl=None, show_spinner=False)
 def load_cpi(start: datetime) -> pd.DataFrame:
     """
-    Load CPI (CPIAUCSL) from a local CSV committed to the repo.
-    Accepts FRED 'downloaddata' format (DATE,VALUE) or (DATE,CPIAUCSL).
-    Filters to start date and returns end-of-month index.
+    Load CPI from a local CSV committed to the repo.
+    Accepts common FRED variants:
+    - DATE / CPIAUCSL
+    - DATE / VALUE
+    - observation_date / VALUE
+    - Date / CPI
+    Auto-detects headers, coerces to monthly end-of-month index.
     """
-    # Try common locations in the repo
+    # Common repo locations (adjust if yours differs)
     candidates = [
         Path("CPIAUCSL.csv"),
         Path("data/CPIAUCSL.csv"),
@@ -193,19 +197,35 @@ def load_cpi(start: datetime) -> pd.DataFrame:
     ]
     csv_path = next((p for p in candidates if p.exists()), None)
     if csv_path is None:
-        # Last-resort: empty frame so the app can handle gracefully
-        st.warning("Local CPIAUCSL.csv not found in repo; CPI floor will be unavailable.")
-        idx = pd.date_range(start, pd.Timestamp.today(), freq="M")
-        return pd.DataFrame({"CPI": np.nan}, index=idx)
+        raise FileNotFoundError(
+            "CPIAUCSL.csv not found in repo root /data /assets or alongside the script."
+        )
 
-    # Read and normalize columns
-    df = pd.read_csv(csv_path, parse_dates=["DATE"], comment="#")
-    value_col = "CPIAUCSL" if "CPIAUCSL" in df.columns else ("VALUE" if "VALUE" in df.columns else None)
+    # Peek the header to detect column names robustly
+    head = pd.read_csv(csv_path, nrows=5)
+    cols = [str(c).strip() for c in head.columns]
+
+    date_candidates  = ["DATE", "Date", "date", "observation_date", "observationDate"]
+    value_candidates = ["CPIAUCSL", "VALUE", "CPI", "cpi", "value"]
+
+    date_col  = next((c for c in cols if c in date_candidates), None)
+    value_col = next((c for c in cols if c in value_candidates), None)
+
+    # Fallbacks: assume first column is date, second is value
+    if date_col is None:
+        date_col = cols[0]
     if value_col is None:
-        raise ValueError(f"CPI file {csv_path} missing CPI column (expected 'CPIAUCSL' or 'VALUE').")
+        value_col = cols[1] if len(cols) > 1 else cols[0]
 
-    df = (df.loc[:, ["DATE", value_col]]
-            .rename(columns={"DATE": "Date", value_col: "CPI"}))
+    # Now load only the two columns and parse dates safely
+    df = pd.read_csv(
+        csv_path,
+        usecols=[date_col, value_col],
+        parse_dates=[date_col],
+        dayfirst=False,  # FRED is ISO-like; keep strict
+        comment="#"
+    ).rename(columns={date_col: "Date", value_col: "CPI"})
+
     df["CPI"] = pd.to_numeric(df["CPI"], errors="coerce")
     df = df.dropna(subset=["CPI"]).sort_values("Date")
     df = df[df["Date"] >= pd.Timestamp(start)]
