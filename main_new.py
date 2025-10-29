@@ -386,7 +386,7 @@ if len(tickers) >= 2:
 
 
     # ---------- Optimization ----------
-     w = optimize(rets, method, rf_m_scalar, enforce_dd, dd_limit)
+    w = optimize(rets, method, rf_m_scalar, enforce_dd, dd_limit)
 
 
     # Portfolio series
