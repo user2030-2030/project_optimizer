@@ -5,6 +5,11 @@
 import warnings
 warnings.filterwarnings("ignore")
 
+import pandas as pd
+import numpy as np
+from datetime import datetime
+import streamlit as st
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -166,10 +171,25 @@ def load_prices(tickers, start):
     data = to_monthly_last(data)
     return data
 
-def load_cpi(start):
-    cpi = DataReader("CPIAUCSL", "fred", start, datetime.today())
-    cpi = to_monthly_last(cpi).rename(columns={"CPIAUCSL": "CPI"})
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_cpi(start: datetime) -> pd.DataFrame:
+    """
+    Fetch CPI (CPIAUCSL) monthly levels from FRED via CSV.
+    Works on Python 3.12/3.13+ without pandas_datareader.
+    """
+    url = (
+        "https://fred.stlouisfed.org/graph/fredgraph.csv"
+        f"?id=CPIAUCSL&observation_start={start:%Y-%m-%d}"
+    )
+    cpi = pd.read_csv(url, parse_dates=["DATE"])
+    cpi = cpi.rename(columns={"DATE": "Date", "CPIAUCSL": "CPI"})
+    cpi["CPI"] = pd.to_numeric(cpi["CPI"], errors="coerce")
+    cpi = cpi.dropna(subset=["CPI"]).set_index("Date").sort_index()
+    # ensure end-of-month sampling
+    cpi = cpi.resample("M").last()
     return cpi
+
 
 def align_and_trim(prices: pd.DataFrame, cpi: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     # Align monthly dates and drop rows/cols that are all-NaN
