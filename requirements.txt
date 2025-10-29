@@ -5,4 +5,5 @@ pandas_datareader
 numpy
 scipy
 matplotlib
+data-reader
 # plotly              # if you switch charts to Plotly
