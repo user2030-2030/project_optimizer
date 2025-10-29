@@ -488,42 +488,7 @@ if len(tickers) >= 2:
 
     st.divider()
     
-    viz = st.selectbox(
-        "Weights visualization",
-        ["Pie", "Donut", "Horizontal bar"],
-        index=0,
-        help="Pie is classic; Donut is cleaner; Horizontal bar is compact and precise."
-    )
-    
-    nonzero = w_df[w_df["Weight"] > 1e-6]
-    
-    if viz == "Pie":
-        fig2, ax2 = plt.subplots(figsize=(6, 6))
-        ax2.pie(nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90)
-        ax2.axis("equal"); st.pyplot(fig2)
-    
-    elif viz == "Donut":
-        fig2, ax2 = plt.subplots(figsize=(6, 6))
-        wedges, texts, autotexts = ax2.pie(
-            nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90,
-            wedgeprops=dict(width=0.40)  # hole
-        )
-        ax2.axis("equal"); st.pyplot(fig2)
-    
-    else:  # Horizontal bar
-        fig2, ax2 = plt.subplots(figsize=(6.5, 4.5))
-        plot_df = nonzero.sort_values("Weight")
-        ax2.barh(plot_df.index, (plot_df["Weight"]*100).round(2))
-        ax2.set_xlabel("Weight (%)"); ax2.set_ylabel("")
-        for i, (name, wv) in enumerate(zip(plot_df.index, (plot_df["Weight"]*100).values)):
-            ax2.text(wv + 0.2, i, f"{wv:.1f}%", va="center")
-        st.pyplot(fig2)
-    
-    
-    else:
-        st.info("Pick at least two assets in the sidebar to begin.")
-    # Safe wrapper: allows `python main.py` without double-starting Streamlit
-    st.divider()
+
     st.caption(
         "Notes: ‘Optimize’ sets the objective for the historical backtest and solves a long‑only weight vector (sum=1). "
         "If **Max Drawdown** is ON, the optimizer enforces the specified drawdown limit over the full sample. "
