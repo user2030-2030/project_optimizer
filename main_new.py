@@ -323,6 +323,8 @@ with st.sidebar:
         help="Ignored when T-Bill mode is selected."
     ) if rf_mode == "Fixed rate (slider)" else None
 
+    plot_real = st.checkbox("Plot in **real** terms (CPI-adjusted) — CPI becomes a flat floor", value=True)
+
     st.divider()
 
     opt_help = (
@@ -374,10 +376,18 @@ if len(tickers) >= 2:
     tickers = [t for t in tickers if t in rets.columns]
 
     # Risk‑free monthly
-    rf_m = (1.0 + rf_ann)**(1.0/12.0) - 1.0
+    
+        # Risk-free monthly **scalar** for optimization/metrics (Sharpe/Sortino)
+    if rf_mode == "3-Month T-Bill from file (TB3MS_FRED.csv)":
+        tb_series = load_tbill(start).reindex(rets.index).ffill()      # % p.a. monthly
+        rf_m_scalar = float((tb_series / 100.0 / 12.0).mean())         # mean monthly rate over sample
+    else:
+        rf_m_scalar = (1.0 + rf_ann)**(1.0/12.0) - 1.0
+
 
     # ---------- Optimization ----------
-    w = optimize(rets, method, rf_m, enforce_dd, dd_limit)
+     w = optimize(rets, method, rf_m_scalar, enforce_dd, dd_limit)
+
 
     # Portfolio series
     port = portfolio_series(w, rets)
@@ -442,11 +452,26 @@ if len(tickers) >= 2:
             st.dataframe((w_df * 100).round(2))
 
             # Pie / alt visualization
-            fig2, ax2 = plt.subplots(figsize=(6, 6))
+                        # Weight visualization
+            viz = st.radio("Visualization", ["Horizontal bar", "Donut pie"], horizontal=True, index=0, key="w_viz")
+
             nonzero = w_df[w_df["Weight"] > 1e-6]
-            ax2.pie(nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90)
-            ax2.axis("equal")
-            st.pyplot(fig2)
+
+            if viz == "Horizontal bar":
+                fig2, ax2 = plt.subplots(figsize=(6, 6))
+                ax2.barh(nonzero.index, (nonzero["Weight"] * 100.0).values)
+                ax2.set_xlabel("Weight (%)")
+                ax2.invert_yaxis()
+                ax2.grid(True, axis="x", alpha=0.3)
+                st.pyplot(fig2)
+            else:  # Donut pie
+                fig2, ax2 = plt.subplots(figsize=(6, 6))
+                wedges, texts, autotexts = ax2.pie(
+                    nonzero["Weight"], labels=nonzero.index, autopct="%1.1f%%", startangle=90, wedgeprops=dict(width=0.5)
+                )
+                ax2.axis("equal")
+                st.pyplot(fig2)
+
 
         with right:
             st.subheader("Portfolio Metrics")
@@ -455,8 +480,9 @@ if len(tickers) >= 2:
             cagr = cagr_from_wealth(wealth)
             mdd = abs(min(0.0, max_drawdown(port)))  # positive
             mu_a, sig_a = annualize_mean_std(port)
-            shrp = sharpe_ratio(w, rets, rf_m)
-            srtn = sortino_ratio(w, rets, rf_m)
+            shrp = sharpe_ratio(w, rets, rf_m_scalar)
+            srtn = sortino_ratio(w, rets, rf_m_scalar)
+
             clmr = calmar_ratio(w, rets)
             strl = sterling_ratio(w, rets)
             cvar = cvar_loss(w, rets, alpha=0.05)
