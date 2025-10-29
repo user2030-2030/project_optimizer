@@ -14,7 +14,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-from pandas_datareader.data import DataReader
 from scipy.optimize import minimize
 from datetime import datetime
 
